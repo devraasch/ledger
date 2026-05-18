@@ -11,6 +11,7 @@ services:
       LEDGER_REPOSITORY_BACKEND: ${LEDGER_REPOSITORY_BACKEND:-database}
       APP_ENV: ${APP_ENV:-development}
       IDEMPOTENCY_SECRET: ${IDEMPOTENCY_SECRET:-change-me-in-production}
+      OTEL_CONSOLE_EXPORTER: ${OTEL_CONSOLE_EXPORTER:-false}
     ports:
       - "8000:8000"
     depends_on:
@@ -31,6 +32,7 @@ services:
       LEDGER_REPOSITORY_BACKEND: ${LEDGER_REPOSITORY_BACKEND:-database}
       APP_ENV: ${APP_ENV:-development}
       IDEMPOTENCY_SECRET: ${IDEMPOTENCY_SECRET:-change-me-in-production}
+      OTEL_CONSOLE_EXPORTER: ${OTEL_CONSOLE_EXPORTER:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,6 +60,25 @@ services:
       - "8080:8080"
     depends_on:
       - postgres
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    depends_on:
+      - prometheus
 
 volumes:
   postgres_data:

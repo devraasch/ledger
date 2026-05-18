@@ -13,6 +13,9 @@ O projeto expõe uma API REST para contas, lançamentos, saldos, transferências
 - SQLAlchemy
 - PostgreSQL
 - Alembic
+- Prometheus
+- OpenTelemetry
+- structlog
 - Ruff
 - Pytest
 
@@ -151,6 +154,60 @@ curl -X POST http://localhost:8000/accounts/{account_id}/deposit \
 
 A resposta inclui a `idempotency_key` gerada para auditoria. Nas camadas internas, a regra de idempotência continua centralizada na aplicação e protegida pelo repositório.
 
+## Observabilidade
+
+O projeto possui observabilidade transversal, sem acoplar domínio ou regras de negócio a frameworks de monitoramento.
+
+Recursos implementados:
+
+- logging estruturado em JSON com `structlog`
+- correlação de requests com `X-Request-ID`
+- middleware para medir duração das requests
+- métricas Prometheus em `/metrics`
+- métricas financeiras por operação
+- tracing OpenTelemetry para FastAPI e SQLAlchemy
+
+Cada request recebe um `request_id`. Se o cliente enviar `X-Request-ID`, esse valor é preservado; caso contrário, a API gera um novo UUID. O mesmo valor é retornado no header da resposta.
+
+Logs estruturados incluem campos como:
+
+- `timestamp`
+- `level`
+- `operation`
+- `account_id`
+- `transaction_id`
+- `idempotency_key`
+- `request_id`
+- `error_type`
+- `duration_ms`
+
+O tracing OpenTelemetry é configurado para instrumentar HTTP e SQLAlchemy. Para imprimir spans no console em desenvolvimento:
+
+```bash
+OTEL_CONSOLE_EXPORTER=true uv run uvicorn app.main:app --reload
+```
+
+## Métricas disponíveis
+
+Endpoint:
+
+```text
+GET /metrics
+```
+
+Exemplos de métricas:
+
+```text
+ledger_http_requests_total
+ledger_http_request_duration_seconds
+ledger_deposits_total
+ledger_withdrawals_total
+ledger_transfers_total
+ledger_rejected_transactions_total
+ledger_idempotency_errors_total
+ledger_insufficient_funds_total
+```
+
 ## Persistência
 
 O sistema possui repositórios PostgreSQL com SQLAlchemy e migrations via Alembic. Os repositórios em memória continuam disponíveis para testes e desenvolvimento local, mas o backend padrão da API é `database`.
@@ -236,14 +293,17 @@ docker compose up --build
 Execute as migrations dentro do container:
 
 ```bash
-docker compose run --rm api uv run alembic upgrade head
+docker compose run --rm migrate
 ```
 
 Acessos:
 
 - API: http://localhost:8000
 - Docs: http://localhost:8000/docs
+- Metrics: http://localhost:8000/metrics
 - Adminer: http://localhost:8080
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000
 
 Credenciais Adminer:
 

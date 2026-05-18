@@ -23,8 +23,11 @@ from app.application.use_cases.deposit import DepositUseCase
 from app.application.use_cases.get_balance import GetBalanceUseCase
 from app.application.use_cases.get_statement import GetStatementUseCase
 from app.application.use_cases.withdraw import WithdrawUseCase
+from app.observability.logging import get_logger
+from app.observability.metrics import record_deposit, record_withdrawal
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
+logger = get_logger()
 
 
 @router.post("", response_model=AccountResponse, status_code=status.HTTP_201_CREATED)
@@ -36,6 +39,11 @@ def create_account(
     ],
 ) -> AccountResponse:
     account = use_case.execute(owner_name=request.owner_name)
+    logger.info(
+        "account_created",
+        operation="create_account",
+        account_id=str(account.id),
+    )
     return AccountResponse.model_validate(account)
 
 
@@ -54,13 +62,23 @@ def deposit(
     request: MoneyOperationRequest,
     use_case: Annotated[DepositUseCase, Depends(get_deposit_use_case)],
 ) -> LedgerEntryResponse:
+    transaction_id = uuid4()
+    timestamp = datetime.now(UTC)
     entry = use_case.execute(
         account_id=account_id,
         amount=request.amount,
         description=request.description,
         idempotency_key=None,
-        transaction_id=uuid4(),
-        timestamp=datetime.now(UTC),
+        transaction_id=transaction_id,
+        timestamp=timestamp,
+    )
+    record_deposit()
+    logger.info(
+        "deposit_completed",
+        operation="deposit",
+        account_id=str(account_id),
+        transaction_id=str(transaction_id),
+        idempotency_key=entry.idempotency_key,
     )
     return LedgerEntryResponse.from_domain(entry)
 
@@ -71,13 +89,23 @@ def withdraw(
     request: MoneyOperationRequest,
     use_case: Annotated[WithdrawUseCase, Depends(get_withdraw_use_case)],
 ) -> LedgerEntryResponse:
+    transaction_id = uuid4()
+    timestamp = datetime.now(UTC)
     entry = use_case.execute(
         account_id=account_id,
         amount=request.amount,
         description=request.description,
         idempotency_key=None,
-        transaction_id=uuid4(),
-        timestamp=datetime.now(UTC),
+        transaction_id=transaction_id,
+        timestamp=timestamp,
+    )
+    record_withdrawal()
+    logger.info(
+        "withdrawal_completed",
+        operation="withdraw",
+        account_id=str(account_id),
+        transaction_id=str(transaction_id),
+        idempotency_key=entry.idempotency_key,
     )
     return LedgerEntryResponse.from_domain(entry)
 

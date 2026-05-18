@@ -9,13 +9,28 @@ from app.application.exceptions import (
     InsufficientFundsError,
     InvalidOperationError,
 )
+from app.observability import (
+    RequestObservabilityMiddleware,
+    metrics_router,
+    setup_logging,
+    setup_tracing,
+)
+from app.observability.metrics import (
+    record_idempotency_error,
+    record_insufficient_funds,
+)
+
+setup_logging()
 
 app = FastAPI(
     title="Ledger Event Sourcing API",
     version="0.1.0",
 )
+app.add_middleware(RequestObservabilityMiddleware)
 app.include_router(accounts_router)
 app.include_router(ledger_router)
+app.include_router(metrics_router)
+setup_tracing(app)
 
 
 def _error_detail(exc: Exception) -> str:
@@ -40,6 +55,7 @@ def handle_insufficient_funds(
     _request: Request,
     exc: InsufficientFundsError,
 ) -> JSONResponse:
+    record_insufficient_funds()
     return JSONResponse(status_code=400, content={"detail": _error_detail(exc)})
 
 
@@ -48,6 +64,7 @@ def handle_duplicate_transaction(
     _request: Request,
     exc: DuplicateTransactionError,
 ) -> JSONResponse:
+    record_idempotency_error()
     return JSONResponse(status_code=409, content={"detail": _error_detail(exc)})
 
 
