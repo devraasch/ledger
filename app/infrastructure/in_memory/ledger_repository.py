@@ -17,6 +17,14 @@ class InMemoryLedgerRepository(LedgerRepository):
         self._entries.append(entry)
         self._idempotency_keys.add(entry.idempotency_key)
 
+    def save_many(self, entries: list[LedgerEntry]) -> None:
+        new_keys = {entry.idempotency_key for entry in entries}
+        if self._idempotency_keys.intersection(new_keys):
+            raise DuplicateTransactionError("Transaction already processed.")
+
+        self._entries.extend(entries)
+        self._idempotency_keys.update(new_keys)
+
     def get_by_account_id(self, account_id: UUID) -> list[LedgerEntry]:
         return [entry for entry in self._entries if entry.account_id == account_id]
 

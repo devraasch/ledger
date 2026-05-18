@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -9,6 +10,7 @@ from app.application.exceptions import (
     InsufficientFundsError,
 )
 from app.application.services.balance_service import BalanceService
+from app.application.services.idempotency_service import IdempotencyService
 from app.application.use_cases.create_account import CreateAccountUseCase
 from app.application.use_cases.deposit import DepositUseCase
 from app.application.use_cases.get_balance import GetBalanceUseCase
@@ -39,21 +41,28 @@ def context() -> UseCaseContext:
     account_repository = InMemoryAccountRepository()
     ledger_repository = InMemoryLedgerRepository()
     balance_service = BalanceService()
+    idempotency_service = IdempotencyService(ledger_repository)
 
     return UseCaseContext(
         account_repository=account_repository,
         ledger_repository=ledger_repository,
         create_account=CreateAccountUseCase(account_repository),
-        deposit=DepositUseCase(account_repository, ledger_repository),
+        deposit=DepositUseCase(
+            account_repository,
+            ledger_repository,
+            idempotency_service,
+        ),
         withdraw=WithdrawUseCase(
             account_repository,
             ledger_repository,
             balance_service,
+            idempotency_service,
         ),
         transfer=TransferUseCase(
             account_repository,
             ledger_repository,
             balance_service,
+            idempotency_service,
         ),
         get_balance=GetBalanceUseCase(
             account_repository,
@@ -87,6 +96,27 @@ def test_deposit(context: UseCaseContext) -> None:
     assert context.get_balance.execute(account.id) == Money.of("100.00")
 
 
+def test_duplicated_deposit_does_not_change_balance(context: UseCaseContext) -> None:
+    account = context.create_account.execute("Grace Hopper")
+    context.deposit.execute(
+        account_id=account.id,
+        amount="100.00",
+        description="Initial deposit",
+        idempotency_key="deposit-001",
+    )
+
+    with pytest.raises(DuplicateTransactionError, match="already processed"):
+        context.deposit.execute(
+            account_id=account.id,
+            amount="100.00",
+            description="Duplicated deposit",
+            idempotency_key="deposit-001",
+        )
+
+    assert context.get_balance.execute(account.id) == Money.of("100.00")
+    assert len(context.get_statement.execute(account.id)) == 1
+
+
 def test_deposit_requires_existing_account(context: UseCaseContext) -> None:
     with pytest.raises(AccountNotFoundError, match="Account not found"):
         context.deposit.execute(
@@ -116,6 +146,33 @@ def test_withdraw(context: UseCaseContext) -> None:
     assert entry.transaction_type is TransactionType.DEBIT
     assert entry.amount == Money.of("40.00")
     assert context.get_balance.execute(account.id) == Money.of("60.00")
+
+
+def test_duplicated_withdraw_does_not_change_balance(context: UseCaseContext) -> None:
+    account = context.create_account.execute("Grace Hopper")
+    context.deposit.execute(
+        account_id=account.id,
+        amount="100.00",
+        description="Initial deposit",
+        idempotency_key="deposit-001",
+    )
+    context.withdraw.execute(
+        account_id=account.id,
+        amount="40.00",
+        description="Cash withdrawal",
+        idempotency_key="withdraw-001",
+    )
+
+    with pytest.raises(DuplicateTransactionError, match="already processed"):
+        context.withdraw.execute(
+            account_id=account.id,
+            amount="40.00",
+            description="Duplicated withdrawal",
+            idempotency_key="withdraw-001",
+        )
+
+    assert context.get_balance.execute(account.id) == Money.of("60.00")
+    assert len(context.get_statement.execute(account.id)) == 2
 
 
 def test_withdraw_does_not_allow_negative_balance(context: UseCaseContext) -> None:
@@ -153,6 +210,38 @@ def test_transfer(context: UseCaseContext) -> None:
     assert credit_entry.amount == Money.of("25.50")
     assert context.get_balance.execute(source.id) == Money.of("74.50")
     assert context.get_balance.execute(destination.id) == Money.of("25.50")
+    assert debit_entry.idempotency_key == "transfer-001"
+    assert credit_entry.idempotency_key == "transfer-001"
+
+
+def test_duplicated_transfer_does_not_change_balances(context: UseCaseContext) -> None:
+    source = context.create_account.execute("Source Account")
+    destination = context.create_account.execute("Destination Account")
+    context.deposit.execute(
+        account_id=source.id,
+        amount="100.00",
+        description="Initial deposit",
+        idempotency_key="deposit-001",
+    )
+    context.transfer.execute(
+        from_account_id=source.id,
+        to_account_id=destination.id,
+        amount="25.00",
+        idempotency_key="transfer-001",
+    )
+
+    with pytest.raises(DuplicateTransactionError, match="already processed"):
+        context.transfer.execute(
+            from_account_id=source.id,
+            to_account_id=destination.id,
+            amount="25.00",
+            idempotency_key="transfer-001",
+        )
+
+    assert context.get_balance.execute(source.id) == Money.of("75.00")
+    assert context.get_balance.execute(destination.id) == Money.of("25.00")
+    assert len(context.get_statement.execute(source.id)) == 2
+    assert len(context.get_statement.execute(destination.id)) == 1
 
 
 def test_transfer_does_not_allow_insufficient_funds(context: UseCaseContext) -> None:
@@ -230,4 +319,102 @@ def test_prevent_duplicate_idempotency_key(context: UseCaseContext) -> None:
             amount="100.00",
             description="Duplicated deposit",
             idempotency_key="deposit-001",
+        )
+
+
+def test_generated_deposit_idempotency_key_prevents_duplicate(
+    context: UseCaseContext,
+) -> None:
+    account = context.create_account.execute("Grace Hopper")
+    transaction_id = uuid4()
+    timestamp = datetime(2026, 5, 18, 12, 0, tzinfo=UTC)
+
+    entry = context.deposit.execute(
+        account_id=account.id,
+        amount="100.00",
+        description="Initial deposit",
+        idempotency_key=None,
+        transaction_id=transaction_id,
+        timestamp=timestamp,
+    )
+
+    assert entry.idempotency_key.startswith("idem_")
+
+    with pytest.raises(DuplicateTransactionError, match="already processed"):
+        context.deposit.execute(
+            account_id=account.id,
+            amount="100.00",
+            description="Duplicated deposit",
+            idempotency_key=None,
+            transaction_id=transaction_id,
+            timestamp=timestamp,
+        )
+
+    assert context.get_balance.execute(account.id) == Money.of("100.00")
+
+
+@pytest.mark.parametrize("idempotency_key", [None, "", "   "])
+def test_deposit_requires_idempotency_key(
+    context: UseCaseContext,
+    idempotency_key: str | None,
+) -> None:
+    account = context.create_account.execute("Grace Hopper")
+
+    expected_message = (
+        "Transaction id is required"
+        if idempotency_key is None
+        else "Idempotency key is required"
+    )
+
+    with pytest.raises(ValueError, match=expected_message):
+        context.deposit.execute(
+            account_id=account.id,
+            amount="100.00",
+            description="Initial deposit",
+            idempotency_key=idempotency_key,
+        )
+
+
+@pytest.mark.parametrize("idempotency_key", [None, "", "   "])
+def test_withdraw_requires_idempotency_key(
+    context: UseCaseContext,
+    idempotency_key: str | None,
+) -> None:
+    account = context.create_account.execute("Grace Hopper")
+
+    expected_message = (
+        "Transaction id is required"
+        if idempotency_key is None
+        else "Idempotency key is required"
+    )
+
+    with pytest.raises(ValueError, match=expected_message):
+        context.withdraw.execute(
+            account_id=account.id,
+            amount="1.00",
+            description="Cash withdrawal",
+            idempotency_key=idempotency_key,
+        )
+
+
+@pytest.mark.parametrize("idempotency_key", [None, "", "   "])
+def test_transfer_requires_idempotency_key(
+    context: UseCaseContext,
+    idempotency_key: str | None,
+) -> None:
+    source = context.create_account.execute("Source Account")
+    destination = context.create_account.execute("Destination Account")
+
+    expected_message = (
+        "Transaction id is required"
+        if idempotency_key is None
+        else "Idempotency key is required"
+    )
+
+    with pytest.raises(ValueError, match=expected_message):
+        context.transfer.execute(
+            from_account_id=source.id,
+            to_account_id=destination.id,
+            amount="1.00",
+            idempotency_key=idempotency_key,
         )

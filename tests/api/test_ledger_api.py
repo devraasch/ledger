@@ -7,7 +7,8 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def client() -> Generator[TestClient]:
+def client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient]:
+    monkeypatch.setenv("LEDGER_REPOSITORY_BACKEND", "in_memory")
     reset_in_memory_repositories()
     with TestClient(app) as test_client:
         yield test_client
@@ -28,14 +29,12 @@ def deposit(
     client: TestClient,
     account_id: str,
     amount: str = "100.00",
-    idempotency_key: str = "deposit-001",
 ) -> dict[str, str]:
     response = client.post(
         f"/accounts/{account_id}/deposit",
         json={
             "amount": amount,
             "description": "Initial deposit",
-            "idempotency_key": idempotency_key,
         },
     )
 
@@ -80,7 +79,6 @@ def test_deposit(client: TestClient) -> None:
         json={
             "amount": "100.00",
             "description": "Initial deposit",
-            "idempotency_key": "deposit-001",
         },
     )
 
@@ -92,7 +90,7 @@ def test_deposit(client: TestClient) -> None:
     assert data["amount"] == "100.00"
     assert data["description"] == "Initial deposit"
     assert data["created_at"]
-    assert data["idempotency_key"] == "deposit-001"
+    assert data["idempotency_key"].startswith("idem_")
 
 
 def test_withdraw(client: TestClient) -> None:
@@ -104,7 +102,6 @@ def test_withdraw(client: TestClient) -> None:
         json={
             "amount": "50.00",
             "description": "ATM withdraw",
-            "idempotency_key": "withdraw-001",
         },
     )
 
@@ -122,7 +119,6 @@ def test_prevent_withdraw_without_funds(client: TestClient) -> None:
         json={
             "amount": "50.00",
             "description": "ATM withdraw",
-            "idempotency_key": "withdraw-001",
         },
     )
 
@@ -141,7 +137,6 @@ def test_transfer(client: TestClient) -> None:
             "from_account_id": source["id"],
             "to_account_id": destination["id"],
             "amount": "25.00",
-            "idempotency_key": "transfer-001",
         },
     )
 
@@ -163,7 +158,6 @@ def test_statement(client: TestClient) -> None:
         json={
             "amount": "40.00",
             "description": "ATM withdraw",
-            "idempotency_key": "withdraw-001",
         },
     )
 
@@ -178,18 +172,34 @@ def test_statement(client: TestClient) -> None:
     ]
 
 
-def test_idempotency_returns_conflict(client: TestClient) -> None:
+def test_deposit_generates_idempotency_key(client: TestClient) -> None:
     account = create_account(client)
-    deposit(client, account["id"])
 
     response = client.post(
         f"/accounts/{account['id']}/deposit",
         json={
             "amount": "100.00",
-            "description": "Duplicated deposit",
+            "description": "Initial deposit",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["idempotency_key"].startswith("idem_")
+
+    balance_response = client.get(f"/accounts/{account['id']}/balance")
+    assert balance_response.json()["balance"] == "100.00"
+
+
+def test_technical_idempotency_fields_are_not_accepted(client: TestClient) -> None:
+    account = create_account(client)
+
+    response = client.post(
+        f"/accounts/{account['id']}/deposit",
+        json={
+            "amount": "100.00",
+            "description": "Initial deposit",
             "idempotency_key": "deposit-001",
         },
     )
 
-    assert response.status_code == 409
-    assert response.json() == {"detail": "Transaction already processed"}
+    assert response.status_code == 422

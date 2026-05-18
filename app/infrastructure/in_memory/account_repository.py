@@ -14,5 +14,8 @@ class InMemoryAccountRepository(AccountRepository):
     def get_by_id(self, account_id: UUID) -> Account | None:
         return self._accounts.get(account_id)
 
+    def lock_by_id(self, account_id: UUID) -> Account | None:
+        return self.get_by_id(account_id)
+
     def exists(self, account_id: UUID) -> bool:
         return account_id in self._accounts

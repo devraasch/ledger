@@ -1,5 +1,6 @@
+from datetime import UTC, datetime
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, status
 
@@ -57,7 +58,9 @@ def deposit(
         account_id=account_id,
         amount=request.amount,
         description=request.description,
-        idempotency_key=request.idempotency_key,
+        idempotency_key=None,
+        transaction_id=uuid4(),
+        timestamp=datetime.now(UTC),
     )
     return LedgerEntryResponse.from_domain(entry)
 
@@ -72,7 +75,9 @@ def withdraw(
         account_id=account_id,
         amount=request.amount,
         description=request.description,
-        idempotency_key=request.idempotency_key,
+        idempotency_key=None,
+        transaction_id=uuid4(),
+        timestamp=datetime.now(UTC),
     )
     return LedgerEntryResponse.from_domain(entry)
 

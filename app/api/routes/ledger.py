@@ -1,4 +1,6 @@
+from datetime import UTC, datetime
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends
 
@@ -22,7 +24,9 @@ def transfer(
         from_account_id=request.from_account_id,
         to_account_id=request.to_account_id,
         amount=request.amount,
-        idempotency_key=request.idempotency_key,
+        idempotency_key=None,
+        transaction_id=uuid4(),
+        timestamp=datetime.now(UTC),
     )
     return TransferResponse(
         debit_entry=LedgerEntryResponse.from_domain(debit_entry),

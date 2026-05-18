@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.domain.ledger_entry import LedgerEntry
 from app.domain.money import Money
@@ -9,16 +9,18 @@ from app.domain.transaction_type import TransactionType
 
 
 class MoneyOperationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     amount: str
     description: str
-    idempotency_key: str
 
 
 class TransferRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     from_account_id: UUID
     to_account_id: UUID
     amount: str
-    idempotency_key: str
 
 
 class BalanceResponse(BaseModel):

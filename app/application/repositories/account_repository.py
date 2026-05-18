@@ -14,5 +14,9 @@ class AccountRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def lock_by_id(self, account_id: UUID) -> Account | None:
+        raise NotImplementedError
+
+    @abstractmethod
     def exists(self, account_id: UUID) -> bool:
         raise NotImplementedError

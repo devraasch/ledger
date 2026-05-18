@@ -10,6 +10,10 @@ class LedgerRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def save_many(self, entries: list[LedgerEntry]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_by_account_id(self, account_id: UUID) -> list[LedgerEntry]:
         raise NotImplementedError
 

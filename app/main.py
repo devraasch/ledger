@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import ProgrammingError, SQLAlchemyError
 
 from app.api.routes import accounts_router, ledger_router
 from app.application.exceptions import (
@@ -61,3 +62,22 @@ def handle_invalid_operation(
 @app.exception_handler(ValueError)
 def handle_value_error(_request: Request, exc: ValueError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": _error_detail(exc)})
+
+
+@app.exception_handler(ProgrammingError)
+def handle_database_schema_error(
+    _request: Request,
+    _exc: ProgrammingError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Database schema is not ready. Run migrations."},
+    )
+
+
+@app.exception_handler(SQLAlchemyError)
+def handle_database_error(_request: Request, _exc: SQLAlchemyError) -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Database operation failed."},
+    )
